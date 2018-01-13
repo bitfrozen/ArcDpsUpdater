@@ -17,11 +17,11 @@ namespace ArcDpsUpdater
 
         private static void Main()
         {
-            RunAsync().Wait();
+            UpdateAsync().Wait();
             Process.Start(gameExe);
         }
 
-        private static async Task RunAsync()
+        private static async Task UpdateAsync()
         {
             Console.WriteLine("checking for ArcDps updates");
 
