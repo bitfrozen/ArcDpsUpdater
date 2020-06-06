@@ -18,7 +18,7 @@ namespace ArcDpsUpdater
         private static string DllUri => ConfigurationManager.AppSettings["dllUri"];
         private static string HashUri => ConfigurationManager.AppSettings["hashUri"];
         private static string GameExe => ConfigurationManager.AppSettings["gameExe"];
-        private static string virusTotalApiKey => ConfigurationManager.AppSettings["virusTotalApiKey"];
+        private static string VirusTotalApiKey => ConfigurationManager.AppSettings["virusTotalApiKey"];
         private static readonly HttpClient HttpClient = new HttpClient();
 
         private static async Task Main()
@@ -41,21 +41,16 @@ namespace ArcDpsUpdater
             {
                 Console.WriteLine("updating ArcDps");
                 await UpdateAsync(serverHash);
-                var fileReport = await CheckFile(DllPath);
-                if (fileReport.Positives > 0)
+
+                if (string.IsNullOrWhiteSpace(VirusTotalApiKey))
                 {
-                    await Console.Out.WriteLineAsync("Some antivirus detected this update as positive. Here is the report:");
-                    foreach (var scan in fileReport.Scans.Where(scan => scan.Value.Detected))
-                    {
-                        await Console.Out.WriteLineAsync($"{scan.Key} detected as positive");
-                    }
-                    await Console.Out.WriteAsync("Do you want to continue? Y/N default: No");
-                    var userResponse = await Console.In.ReadLineAsync();
-                    if (!userResponse.ToLower().Contains("y"))
-                    {
-                        return false;
-                    }
+                    await Console.Out.WriteLineAsync("Skipping VirusTotal check, because no API key specified in config file");
                 }
+                else
+                {
+                    if (!await CheckFileWithVirusTotal()) return false;
+                }
+
                 Console.WriteLine("ArcDps update complete");
             } else
             {
@@ -65,11 +60,35 @@ namespace ArcDpsUpdater
             return true;
         }
 
-        private static async Task<FileReport> CheckFile(string dllPath)
+        private static async Task<bool> CheckFileWithVirusTotal()
+        {
+            await Console.Out.WriteLineAsync("Checking ArcDps update on VirusTotal");
+            var fileReport = await GetVirusTotalFileReport(DllPath);
+            if (fileReport.Positives > 0)
+            {
+                await Console.Out.WriteLineAsync("Some antivirus detected this update as positive. Here is the report:");
+                foreach (var scan in fileReport.Scans.Where(scan => scan.Value.Detected))
+                {
+                    await Console.Out.WriteLineAsync($"{scan.Key} detected as positive");
+                }
+
+                await Console.Out.WriteAsync("Do you want to continue? Y/N default: No");
+                var userResponse = await Console.In.ReadLineAsync();
+                if (!userResponse.ToLower().Contains("y"))
+                {
+                    return false;
+                }
+            }
+            await Console.Out.WriteLineAsync("Finished ArcDps check");
+
+            return true;
+        }
+
+        private static async Task<FileReport> GetVirusTotalFileReport(string dllPath)
         {
             await Console.Out.WriteLineAsync($"Checking file: {dllPath} on VirusTotal");
             var virusTotal =
-                new VirusTotal(virusTotalApiKey) {UseTLS = true};
+                new VirusTotal(VirusTotalApiKey) {UseTLS = true};
 
             //Check if the file has been scanned before.
             var fileToScan = new FileInfo(dllPath);
