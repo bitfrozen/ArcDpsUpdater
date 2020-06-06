@@ -1,27 +1,36 @@
 ﻿using System;
+using System.Configuration;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Threading.Tasks;
+using VirusTotalNet;
+using VirusTotalNet.ResponseCodes;
+using VirusTotalNet.Results;
 
 namespace ArcDpsUpdater
 {
-    internal class Program
+    internal static class Program
     {
-        private const string hashPath = @"C:\Program Files\Guild Wars 2\bin64\d3d9.dll.md5sum";
-        private const string dllPath = @"C:\Program Files\Guild Wars 2\bin64\d3d9.dll";
-        private const string dllUri = "https://www.deltaconnected.com/arcdps/x64/d3d9.dll";
-        private const string hashUri = "https://www.deltaconnected.com/arcdps/x64/d3d9.dll.md5sum";
-        private const string gameExe = @"C:\Program Files\Guild Wars 2\Gw2-64.exe";
-        private static readonly HttpClient httpClient = new HttpClient();
+        private static string HashPath => ConfigurationManager.AppSettings["hashPath"];
+        private static string DllPath => ConfigurationManager.AppSettings["dllPath"];
+        private static string DllUri => ConfigurationManager.AppSettings["dllUri"];
+        private static string HashUri => ConfigurationManager.AppSettings["hashUri"];
+        private static string GameExe => ConfigurationManager.AppSettings["gameExe"];
+        private static string virusTotalApiKey => ConfigurationManager.AppSettings["virusTotalApiKey"];
+        private static readonly HttpClient HttpClient = new HttpClient();
 
-        private static void Main()
+        private static async Task Main()
         {
-            UpdateAsync().Wait();
-            Process.Start(gameExe);
+            // UpdateAsync().Wait();
+            if (await UpdateAsync())
+            {
+                Process.Start(GameExe);                
+            }
         }
 
-        private static async Task UpdateAsync()
+        private static async Task<bool> UpdateAsync()
         {
             Console.WriteLine("checking for ArcDps updates");
 
@@ -32,26 +41,66 @@ namespace ArcDpsUpdater
             {
                 Console.WriteLine("updating ArcDps");
                 await UpdateAsync(serverHash);
+                var fileReport = await CheckFile(DllPath);
+                if (fileReport.Positives > 0)
+                {
+                    await Console.Out.WriteLineAsync("Some antivirus detected this update as positive. Here is the report:");
+                    foreach (var scan in fileReport.Scans.Where(scan => scan.Value.Detected))
+                    {
+                        await Console.Out.WriteLineAsync($"{scan.Key} detected as positive");
+                    }
+                    await Console.Out.WriteAsync("Do you want to continue? Y/N default: No");
+                    var userResponse = await Console.In.ReadLineAsync();
+                    if (!userResponse.ToLower().Contains("y"))
+                    {
+                        return false;
+                    }
+                }
                 Console.WriteLine("ArcDps update complete");
+            } else
+            {
+                Console.WriteLine("nothing to update");
             }
+
+            return true;
+        }
+
+        private static async Task<FileReport> CheckFile(string dllPath)
+        {
+            await Console.Out.WriteLineAsync($"Checking file: {dllPath} on VirusTotal");
+            var virusTotal =
+                new VirusTotal(virusTotalApiKey) {UseTLS = true};
+
+            //Check if the file has been scanned before.
+            var fileToScan = new FileInfo(dllPath);
+            var fileReport = await virusTotal.GetFileReportAsync(fileToScan);
+            var hasFileBeenScannedBefore = fileReport.ResponseCode == FileReportResponseCode.Present;
+            //If the file has been scanned before, the results are embedded inside the report.
+            if (!hasFileBeenScannedBefore)
+            {
+                ScanResult fileResult = await virusTotal.ScanFileAsync(fileToScan);
+                fileReport = await virusTotal.GetFileReportAsync(fileToScan);
+            }
+
+            return fileReport;
         }
 
         private static string GetLocalHash()
         {
-            return File.Exists(hashPath) ? File.ReadAllText(hashPath) : string.Empty;
+            return File.Exists(HashPath) ? File.ReadAllText(HashPath) : string.Empty;
         }
 
         private static async Task UpdateAsync(string serverHash)
         {
-            var response = await httpClient.GetAsync(dllUri);
+            var response = await HttpClient.GetAsync(DllUri);
             var bytes = await response.Content.ReadAsByteArrayAsync();
-            File.WriteAllBytes(dllPath, bytes);
-            File.WriteAllText(hashPath, serverHash);
+            File.WriteAllBytes(DllPath, bytes);
+            File.WriteAllText(HashPath, serverHash);
         }
 
         private static async Task<string> GetServerHashAsync()
         {
-            var response = await httpClient.GetAsync(hashUri);
+            var response = await HttpClient.GetAsync(HashUri);
             return await response.Content.ReadAsStringAsync();
         }
     }
